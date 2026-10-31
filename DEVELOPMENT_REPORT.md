@@ -1,5 +1,41 @@
 # İlk sürüm — 31 Ekim 2026
 
+## Gerçek dosya ve tekrar önizlemesi güncellemesi
+
+- `images.py` eklendi: PNG parça sınırları/CRC ve JPEG SOF üzerinden gerçek
+  kodlanmış boyut okuması. Tam piksel kod çözümü veya netlik analizi değildir.
+- En fazla 20 MB PNG/JPEG yerel arşive alınır; kaynak baytlar değişmez. Dosyalar
+  `data/assets/<sha256>` altında, kullanıcı veritabanı yanında tutulur. Uzantıya
+  güvenilmez; SVG ve görsel olmayan içerik reddedilir. JPEG başlık kontrolü tek
+  başına tüm dosyanın dekodlanabileceği anlamına gelmez.
+- Ürün/tür/hash tekrarında mevcut kayıt kullanılır. Aynı source hash başka ürüne
+  atanamaz; içerik adresli dosyalar üzerine yazılmaz. Bu, benzerlik veya hukuki
+  özgünlük denetimi değildir. 40 MP üzerinde tarayıcı önizlemesi kapalıdır.
+- Baskı hesabında asset seçilirse sunucu piksel ölçüsünü kayıtlı dosya başlığından
+  alır; istemcinin farklı ölçü veya başka ürüne ait görsel göndermesi engellenir.
+  `print_ready` hâlâ false. Gerçek baskı ölçüsü satıcı/üretici tarafından girilir.
+- Seamless 3×3 önizlemesi tarayıcı canvas üzerinde; source değiştirilmez.
+  Kodlanmış ölçü ile EXIF yönü ayrımı görünür. Kenar/netlik/renk/ölçek insan
+  incelemesi bekler; otomatik seamless veya upscale onayı verilmez.
+- **30 standart test geçti.** Gerçek HTTP üzerinden PNG yükleme ve orijinal
+  dosya okuma; bozuk dosya, yanlış ölçü, çapraz ürün ve tekrar kontrolleri dahil.
+- **Gerçek Chromium testi geçti:** geçici veritabanında ürün oluşturma, PNG
+  yükleme, dokuz karenin 36 renk örneğiyle 3×3 canvas doğrulaması, Chromium'un
+  ürettiği gerçek JPEG'in boyut kontrolü ve dosyadan baskı formuna aktarım.
+  JavaScript pageerror listesi boş. Ekran görüntüsü incelendi. Test düz renkli
+  kuadranlardan oluşan fixture kullanır; gerçek mağaza ürünü değildir.
+- JavaScript syntax ve Python compile kontrolleri geçti. Yerel sunucu güncel
+  kodla yeniden başlatıldı; kullanıcı verileri testlere karışmadı.
+- Sonraki gerçek üretim adımları değişmedi: Printmarkt yetkili erişimi,
+  tedarikçi maliyetleri, satıcı katkısı, gerçek mockup/SEO, Etsy taslağı ve Drive
+  çıktı doğrulaması henüz tamamlanmadı.
+
+Güncelleme kullanımı: Windows'ta sunucuyu Ctrl+C ile kapatın. Yeni GitHub ZIP'ini
+ayrı klasöre çıkarın. Eski uygulamanın tüm `data/` klasörünü yeni sürüm klasörüne
+kopyalayın (var olan data klasörünün üzerine körlemesine yazmayın), ardından yeni
+klasörde `py -3 server.py --open-browser` çalıştırın. Eski klasörü yedek olarak
+saklayın. Veritabanına yalnızca ek bir tablo eklenir; mevcut kayıtlar silinmez.
+
 ## GitHub aktarımı
 
 Kullanıcı yeni depoyu oluşturup adresini doğruladı:

@@ -55,6 +55,17 @@ Boş veritabanıyla başlar; örnek ürünler gerçek veri olarak eklenmez.
   Tutarlar aynı para biriminde olmalı; kur dönüşümü yapılmaz.
 - Elle girilen gerçek piksel ve fiziksel ölçülerden 300 DPI kontrolü; kaynak/mockup
   oranı kontrolü. Seamless boyutu toplam duvar değil, tek tekrar ölçüsüdür.
+- `Tasarım dosyaları` ekranında gerçek PNG/JPEG (en fazla 20 MB) yükleme.
+  Kaynak değişmez; dosya başlığından piksel boyutu okunur, SHA-256 ile saklanır.
+  Aynı ürün/tür/dosya yeniden yüklenmez; aynı kaynak başka ürüne de atanamaz.
+  Bu yalnızca aynı baytların kontrolüdür, görsel benzerlik/özgünlük garantisi değil.
+- Seamless kaynak için tarayıcıda küçültülmüş 3×3 tekrar önizlemesi. Kaynak dosya
+  değiştirilmez, baskı dosyası veya upscale üretilmez. 40 MP üzeri dosyalarda
+  tarayıcı bellek tüketimi için önizleme kapalıdır; başlık ölçümü kullanılabilir.
+- `Baskı kontrolü` ekranında yüklenmiş dosyayı seçince ölçüler dosya kaydından
+  alınır. Sunucu istemcinin farklı bir piksel boyutu göndermesine güvenmez.
+  Piksel kod çözümü, netlik, renk profili, EXIF yönü ve repeat kalitesi otomatik
+  doğrulanmış sayılmaz; baskıya hazır onayı verilmez.
 - Önce/sonra değişiklik geçmişi, kalıcı SQLite, yinelenen hesap ve SKU kontrolü.
 - Gerçek bağlantı durumları: bağlı olmayan hizmetler başarılı gösterilmez.
 - Dokuz aşamalı pilot kontrolü: kanıt/not ve insan inceleme durumu. Bağlantı
@@ -73,7 +84,7 @@ mockup oluşturmaz, dışarı dosya yüklemez ve ürün yayımlamaz. Etsy tasla�
 listing ID veya Drive bağlantısı üretilmez. Etsy kural ve ücretleri çevrimiçi
 doğrulanmadı; formdaki oranlar kullanıcı tarafından girilir. Tüm fiyatlar
 doğrulanmamış senaryo olarak etiketlenir; 30 günden eski kaynak uyarılır.
-Dosya netliği, repeat/kenar ve 3×3 kontrolü, satıcı katkısı, benzerlik ve 10 mockup
+Dosya netliği, repeat/kenar ve 3×3 önizlemesinin insan incelemesi, satıcı katkısı, benzerlik ve 10 mockup
 incelemesi insan kontrolü bekler; baskıya hazır onayı otomatik verilmez.
 SKU kontrolü tasarımsal veya hukuki özgünlük garantisi değildir.
 
@@ -84,6 +95,17 @@ Yedekleme için SQLite backup API'sini kullanın; açık veritabanını körleme
 üzerine kopyalamayın. Yerel kayıtlar kimlik bilgisi kasası değildir. Şifre veya API
 anahtarı notlara, kaynak URL'lerine veya formlara girilmemeli.
 Testler geçici veritabanı kullanır, gerçek çalışma kayıtlarına dokunmaz.
+Yüklenen kaynak dosyaları da `data/assets/` altındadır; güncelleme ve yedekleme
+sırasında tüm `data/` klasörünü koruyun. SQLite yedeği tek başına görsel dosyalarını
+içermez. Kaynak ZIP ve Git deposu kullanıcı dosyalarını içermez.
+
+## İsteğe bağlı gerçek tarayıcı kontrolü
+
+Bulut geliştirme ortamında kurulu Chromium ve Playwright Python ile
+`python3 scripts/browser_check.py` çalıştırıldı. Geçici veritabanında ürün,
+gerçek PNG yükleme, dokuz tekrardaki 36 renk örneği, gerçek JPEG başlık ölçümü ve
+dosyadan 300 DPI formuna aktarım doğrulandı. Bunlar uygulamanın çalışma zamanı
+bağımlılığı değildir; kullanıcı bilgisayarına kurulmaları gerekmez.
 
 ## Sonraki entegrasyonlar
 

@@ -1,15 +1,28 @@
 from datetime import date
 import http.client
+import base64
+import hashlib
 import json
 from pathlib import Path
 import sqlite3
+import struct
 import tempfile
 import threading
 import unittest
+import zlib
 from http.server import ThreadingHTTPServer
 
 from domain import ValidationError, pricing, quality
 from server import Store, handler_factory
+from images import image_metadata
+
+
+def png_fixture(width=2, height=2):
+    # A real, lossless RGB PNG with valid IDAT data. Test-only, never user data.
+    def chunk(kind, payload):
+        return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF)
+    pixels = b"".join(b"\x00" + b"\x20\x70\x50" * width for _ in range(height))
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(pixels)) + chunk(b"IEND", b"")
 
 
 def scenario():
@@ -21,6 +34,22 @@ def scenario():
 
 
 class CalculationTests(unittest.TestCase):
+    def test_real_png_header_dimensions_and_corruption(self):
+        raw = png_fixture(6, 4)
+        metadata = image_metadata(raw)
+        self.assertEqual((metadata["width_px"], metadata["height_px"]), (6, 4))
+        self.assertFalse(metadata["pixels_decoded"])
+        broken = raw[:25] + bytes([raw[25] ^ 1]) + raw[26:]
+        with self.assertRaises(ValidationError):
+            image_metadata(broken)
+        with self.assertRaises(ValidationError):
+            image_metadata(raw[:-12])
+
+    def test_disguised_svg_and_missing_image_are_rejected(self):
+        for raw in (b'<svg onload="alert(1)"></svg>', b"", b"not an image.png"):
+            with self.assertRaises(ValidationError):
+                image_metadata(raw)
+
     def test_discount_shipping_tax_and_distinct_fee_bases(self):
         r = pricing(scenario())
         self.assertEqual(r["revenue"], 90)
@@ -154,6 +183,60 @@ class StoreTests(unittest.TestCase):
             self.store.add_output(data)
         self.assertEqual(self.store.snapshot()["pilot_checks"], [])
 
+    def asset_data(self, product_id):
+        return dict(product_id=product_id, kind="seamless_source", filename="../../example.png", base64=base64.b64encode(png_fixture()).decode())
+
+    def test_real_file_is_unchanged_and_repeated_upload_reuses_record(self):
+        p = self.store.product(self.product)
+        first = self.store.add_asset(self.asset_data(p["id"]))
+        second = self.store.add_asset(self.asset_data(p["id"]))
+        self.assertEqual(first["id"], second["id"])
+        self.assertTrue(second["reused"])
+        assets = self.store.snapshot()["assets"]
+        self.assertEqual(len(assets), 1)
+        self.assertEqual(assets[0]["filename"], "example.png")
+        raw = self.store.asset_path(assets[0]["sha256"]).read_bytes()
+        self.assertEqual(raw, png_fixture())
+        self.assertEqual(hashlib.sha256(raw).hexdigest(), assets[0]["sha256"])
+
+    def test_source_duplicate_across_products_is_blocked(self):
+        one = self.store.product(self.product)
+        two = self.store.product({**self.product, "sku":"TEST-002"})
+        self.store.add_asset(self.asset_data(one["id"]))
+        with self.assertRaises(ValidationError):
+            self.store.add_asset(self.asset_data(two["id"]))
+
+    def test_quality_uses_stored_file_dimensions_not_client_claim(self):
+        p = self.store.product(self.product)
+        asset = self.store.add_asset(self.asset_data(p["id"]))
+        result = self.store.evaluate(dict(product_id=p["id"], inputs=dict(asset_id=asset["id"], kind="seamless_source", width_px=999999, height_px=999999, width_cm=2.54, height_cm=2.54)), "quality")["result"]
+        self.assertEqual(result["effective_dpi"], 2)
+        self.assertFalse(result["resolution_ok"])
+        self.assertFalse(result["print_ready"])
+        self.assertEqual(result["input_evidence"], "file_header")
+
+    def test_asset_from_another_product_cannot_be_used_for_quality(self):
+        p = self.store.product(self.product)
+        other = self.store.product({**self.product, "sku":"TEST-003"})
+        asset = self.store.add_asset(self.asset_data(p["id"]))
+        with self.assertRaises(ValidationError):
+            self.store.evaluate(dict(product_id=other["id"], inputs=dict(asset_id=asset["id"], kind="seamless_source", width_cm=1, height_cm=1)), "quality")
+
+    def test_existing_asset_is_not_overwritten_if_disk_corrupted(self):
+        p = self.store.product(self.product)
+        first = self.store.add_asset(self.asset_data(p["id"]))
+        row = self.store.asset(first["id"])
+        path = self.store.asset_path(row["sha256"])
+        path.write_bytes(b"corrupted test fixture")
+        with self.assertRaises(ValidationError):
+            self.store.add_asset(self.asset_data(p["id"]))
+        # A different role reaches shared content-addressed storage; no overwrite.
+        upload = self.asset_data(p["id"])
+        upload["kind"] = "seamless_mockup"
+        with self.assertRaises(ValidationError):
+            self.store.add_asset(upload)
+        self.assertEqual(path.read_bytes(), b"corrupted test fixture")
+
     def test_seo_import_preserves_description_and_rejects_invalid_tags(self):
         p = self.store.product(self.product)
         data = dict(product_id=p["id"], role="seo", reference="https://example.com/test-seo", title="Fixture title", description="Fixed seller text\nAI disclosure to be reviewed", tags=["wallpaper", "Wallpaper"])
@@ -221,6 +304,19 @@ class HTTPTests(unittest.TestCase):
             status, body = self.request(path)
             self.assertEqual(status, 200)
             self.assertIn(expected, body)
+
+    def test_file_upload_serves_original_and_keeps_disk_paths_private(self):
+        status, body = self.request("/api/products", "POST", dict(title="Asset fixture", sku="FILE-001", kind="seamless", notes="test only"))
+        self.assertEqual(status, 200)
+        product = json.loads(body)
+        raw = png_fixture()
+        status, body = self.request("/api/assets", "POST", dict(product_id=product["id"], kind="seamless_source", filename="image.png", base64=base64.b64encode(raw).decode()))
+        self.assertEqual(status, 200)
+        asset = json.loads(body)
+        status, body = self.request("/assets/" + asset["id"])
+        self.assertEqual(status, 200)
+        self.assertEqual(body, raw)
+        self.assertEqual(self.request("/data/assets/" + hashlib.sha256(raw).hexdigest())[0], 404)
 
 
 if __name__ == "__main__":

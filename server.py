@@ -1,7 +1,10 @@
 """Local-only AuraWallCoverings workspace. No Etsy publishing or external writes."""
 import argparse
+import base64
+import binascii
 from datetime import datetime, timezone
 import json
+import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import re
@@ -10,6 +13,7 @@ import uuid
 from urllib.parse import urlsplit
 
 from domain import ValidationError, pricing, quality, text
+from images import image_metadata
 
 ROOT = Path(__file__).resolve().parent
 
@@ -47,6 +51,13 @@ class Store:
               id TEXT PRIMARY KEY, product_id TEXT NOT NULL REFERENCES products(id),
               role TEXT NOT NULL, reference TEXT NOT NULL, payload_json TEXT NOT NULL,
               created_at TEXT NOT NULL, UNIQUE(product_id, role, reference));
+            CREATE TABLE IF NOT EXISTS assets (
+              id TEXT PRIMARY KEY, product_id TEXT NOT NULL REFERENCES products(id),
+              kind TEXT NOT NULL, filename TEXT NOT NULL, sha256 TEXT NOT NULL,
+              size_bytes INTEGER NOT NULL, metadata_json TEXT NOT NULL,
+              created_at TEXT NOT NULL, UNIQUE(product_id,kind,sha256));
+            CREATE UNIQUE INDEX IF NOT EXISTS assets_unique_source
+              ON assets(sha256) WHERE kind IN ('seamless_source','mural_source');
             """)
 
     def connect(self):
@@ -70,8 +81,11 @@ class Store:
         with self.connect() as db:
             result["pilot_checks"] = [dict(row) for row in db.execute("SELECT * FROM pilot_checks ORDER BY updated_at DESC")]
             result["outputs"] = [dict(row) for row in db.execute("SELECT * FROM outputs ORDER BY created_at DESC LIMIT 500")]
+            result["assets"] = [dict(row) for row in db.execute("SELECT * FROM assets ORDER BY created_at DESC LIMIT 500")]
         for item in result["outputs"]:
             item["payload"] = json.loads(item.pop("payload_json"))
+        for item in result["assets"]:
+            item["metadata"] = json.loads(item.pop("metadata_json"))
         result["generated_at"] = now()
         result["shop"] = "AuraWallCoverings"
         result["limits"] = {"rows_per_section": 500}
@@ -137,7 +151,20 @@ class Store:
         inputs = data.get("inputs")
         if not isinstance(inputs, dict):
             raise ValidationError("Hesap girdileri gerekli.")
-        result = pricing(inputs) if kind == "pricing" else quality(inputs)
+        if kind == "quality" and inputs.get("asset_id"):
+            asset = self.asset(text(inputs, "asset_id", 100))
+            if asset["product_id"] != product_id:
+                raise ValidationError("Görsel başka bir ürüne ait.")
+            if inputs.get("kind") != asset["kind"]:
+                raise ValidationError("Kontrol türü yüklenen görsel türüyle eşleşmeli.")
+            metadata = json.loads(asset["metadata_json"])
+            inputs = {**inputs, "width_px": metadata["width_px"], "height_px": metadata["height_px"]}
+            result = quality(inputs)
+            result["input_evidence"] = "file_header"
+            result["sha256"] = asset["sha256"]
+            result["note"] = "Piksel ölçüsü yüklenen dosyanın başlığından okundu. Piksel kod çözümü, netlik, renk ve tekrar uyumu otomatik doğrulanmadı. 3×3 önizlemeyi ve kaynak dosyayı inceleyin; baskıya hazır onayı verilmez. Seamless ölçüsü tek repeat'in fiziksel boyutudur."
+        else:
+            result = pricing(inputs) if kind == "pricing" else quality(inputs)
         with self.connect() as db:
             if not db.execute("SELECT 1 FROM products WHERE id=?", (product_id,)).fetchone():
                 raise KeyError("Ürün bulunamadı.")
@@ -148,6 +175,62 @@ class Store:
             db.execute("INSERT INTO evaluations VALUES(?,?,?,?,?,?)", (identity, product_id, kind, json.dumps(inputs, sort_keys=True), json.dumps(result), now()))
             self.audit(db, f"{kind}.evaluated", product_id, None, {"evaluation_id": identity, "result": result})
             return {"id": identity, "result": result, "reused": False}
+
+    def asset(self, identity):
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM assets WHERE id=?", (identity,)).fetchone()
+            if not row:
+                raise KeyError("Dosya bulunamadı.")
+            return dict(row)
+
+    def asset_path(self, sha256):
+        if not re.fullmatch(r"[a-f0-9]{64}", sha256):
+            raise ValidationError("Dosya kimliği geçersiz.")
+        return Path(self.filename).parent / "assets" / sha256
+
+    def add_asset(self, data):
+        product_id = text(data, "product_id", 100)
+        kind = text(data, "kind", 30)
+        if kind not in ("seamless_source", "mural_source", "seamless_mockup", "mural_mockup"):
+            raise ValidationError("Görsel türü geçersiz.")
+        filename = text(data, "filename", 255)
+        # Names are display metadata only; filesystem paths use SHA-256 exclusively.
+        filename = filename.replace("\\", "/").split("/")[-1]
+        if not filename:
+            raise ValidationError("Dosya adı gerekli.")
+        encoded = text(data, "base64", 28_000_000)
+        try:
+            raw = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error):
+            raise ValidationError("Dosya aktarımı geçersiz.")
+        metadata = image_metadata(raw)
+        digest = hashlib.sha256(raw).hexdigest()
+        with self.connect() as db:
+            product = db.execute("SELECT kind FROM products WHERE id=?", (product_id,)).fetchone()
+            if not product:
+                raise KeyError("Ürün bulunamadı.")
+            if kind.split("_")[0] != product["kind"]:
+                raise ValidationError("Dosya türü ürünün seamless/mural türüyle eşleşmeli.")
+            if kind.endswith("_source") and db.execute("SELECT 1 FROM assets WHERE sha256=? AND kind LIKE '%_source' AND product_id<>?", (digest, product_id)).fetchone():
+                raise ValidationError("Aynı kaynak dosya başka üründe zaten kayıtlı. Mükerrer tasarım kontrolü yapın.")
+            existing = db.execute("SELECT id FROM assets WHERE product_id=? AND kind=? AND sha256=?", (product_id, kind, digest)).fetchone()
+            if existing:
+                existing_path = self.asset_path(digest)
+                if not existing_path.is_file() or hashlib.sha256(existing_path.read_bytes()).hexdigest() != digest:
+                    raise ValidationError("Önceki dosya eksik veya bütünlük kontrolü başarısız; üzerine yazılmadı.")
+                return {"id": existing["id"], "reused": True, "metadata": metadata}
+            path = self.asset_path(digest)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                with path.open("xb") as output:
+                    output.write(raw)
+            except FileExistsError:
+                if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+                    raise ValidationError("Saklanan dosyanın bütünlüğü uyuşmuyor; üzerine yazılmadı.")
+            identity = str(uuid.uuid4())
+            db.execute("INSERT INTO assets VALUES(?,?,?,?,?,?,?,?)", (identity, product_id, kind, filename, digest, len(raw), json.dumps(metadata), now()))
+            self.audit(db, "asset.uploaded_local", product_id, None, {"asset_id": identity, "sha256": digest, "metadata": metadata})
+            return {"id": identity, "reused": False, "metadata": metadata}
 
     def pilot_check(self, data):
         product_id = text(data, "product_id", 100)
@@ -224,7 +307,7 @@ def handler_factory(store):
             self.send_header("Content-Length", str(len(payload)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'self'; script-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'")
+            self.send_header("Content-Security-Policy", "default-src 'self'; img-src 'self' blob:; style-src 'self'; script-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'")
             self.end_headers()
             self.wfile.write(payload)
 
@@ -241,6 +324,14 @@ def handler_factory(store):
             if not self.allowed():
                 return
             path = urlsplit(self.path).path
+            if re.fullmatch(r"/assets/[a-f0-9-]{36}", path):
+                try:
+                    asset = store.asset(path.split("/")[-1])
+                    metadata = json.loads(asset["metadata_json"])
+                    raw = store.asset_path(asset["sha256"]).read_bytes()
+                    return self.send(200, raw, metadata["mime"])
+                except (KeyError, FileNotFoundError):
+                    return self.send(404, {"error": "Dosya bulunamadı."})
             if path == "/api/state":
                 return self.send(200, store.snapshot())
             if path == "/api/health":
@@ -266,7 +357,8 @@ def handler_factory(store):
                 if self.headers.get_content_type() != "application/json":
                     raise ValidationError("JSON içerik gerekli.")
                 size = int(self.headers.get("Content-Length", 0))
-                if not 0 < size <= 100_000:
+                limit = 28_100_000 if urlsplit(self.path).path == "/api/assets" else 100_000
+                if not 0 < size <= limit:
                     raise ValidationError("İstek boyutu geçersiz.")
                 data = json.loads(self.rfile.read(size))
                 if not isinstance(data, dict):
@@ -282,6 +374,8 @@ def handler_factory(store):
                     result = store.pilot_check(data)
                 elif self.command == "POST" and path == "/api/outputs":
                     result = store.add_output(data)
+                elif self.command == "POST" and path == "/api/assets":
+                    result = store.add_asset(data)
                 elif self.command == "POST" and path in ("/api/pricing", "/api/quality"):
                     result = store.evaluate(data, path.split("/")[-1])
                 else:
@@ -292,7 +386,7 @@ def handler_factory(store):
             except (ValueError, json.JSONDecodeError):
                 self.send(400, {"error": "Girdileri kontrol edin; zorunlu alanlar, tarih, sayılar ve matrah seçimleri geçerli olmalı."})
             except (sqlite3.IntegrityError, FileExistsError):
-                self.send(409, {"error": "SKU veya kayıt zaten mevcut ya da sürümü değişmiş. Yenileyerek kontrol edin."})
+                self.send(409, {"error": "SKU, dosya veya kayıt zaten mevcut ya da sürümü değişmiş. Yenileyerek kontrol edin."})
             except KeyError:
                 self.send(404, {"error": "Ürün bulunamadı."})
             except Exception:
