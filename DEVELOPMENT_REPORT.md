@@ -1,5 +1,17 @@
 # İlk sürüm — 31 Ekim 2026
 
+## GitHub aktarımı
+
+Kullanıcı yeni depoyu oluşturup adresini doğruladı:
+https://github.com/ozkanibrahim4820-ai/aurawallcoverings-studio
+Boş depo mevcut platform HTTPS kimlik doğrulamasıyla okunabildi.
+Kaynaklar `main` dalına başarıyla aktarıldı; ilk kaynak commit'i
+`1ef737a2a154c5cf308313ab62589535e35d4352`.
+`data/`, veritabanı, Python önbelleği veya kimlik bilgisi eklenmedi.
+GitHub `Code` → `Download ZIP` üzerinden indirme, sohbet dosya aktarımının
+yerine kullanılabilir. Aşağıdaki “henüz uzak depoya bağlanmadı” ifadeleri ilk
+yerel sürümün tarihsel durumudur; bu aktarım sonrasında geçerli değildir.
+
 ## Son güncelleme — yerel kullanım ve Printmarkt çıktı takibi
 
 - Windows için `START_WINDOWS.bat`, Mac/Linux için `start.sh` eklendi. Python

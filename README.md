@@ -5,6 +5,10 @@ Python 3.12+ standart kütüphanesiyle çalışır; paket veya abonelik gerekmez
 
 ## Kendi Windows bilgisayarınızda açma
 
+Proje deposu: https://github.com/ozkanibrahim4820-ai/aurawallcoverings-studio
+GitHub'da `Code` → `Download ZIP` seçeneğini kullanın. Özel depoya erişmek için
+deponun sahibi olan GitHub hesabınızda oturum açmanız gerekebilir.
+
 Kaynak ZIP paketini indirip bir klasöre çıkarın. İçindeki `START_WINDOWS.bat`
 dosyasına çift tıklayın. Python 3.12+ kuruluysa sunucu başlar ve tarayıcı otomatik
 açılır. Python yoksa başlatıcı kurulum adresini gösterir; Python kurulumunda
