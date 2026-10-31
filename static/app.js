@@ -3,7 +3,7 @@ let state;
 const $ = (q) => document.querySelector(q);
 const escapeHTML = (value) => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const date = value => new Date(value).toLocaleString("tr-TR");
-const labels = {files:"Tasarım dosyaları",outputs:"Printmarkt çıktıları",pilot:"Pilot kontrolü",overview:"Genel görünüm",products:"Ürünler & pilot",research:"Araştırma defteri",pricing:"Maliyet & kâr",quality:"Baskı kontrolü",activity:"İşlem geçmişi"};
+const labels = {performance:"Satış & karar paneli",files:"Tasarım dosyaları",outputs:"Printmarkt çıktıları",pilot:"Pilot kontrolü",overview:"Genel görünüm",products:"Ürünler & pilot",research:"Araştırma defteri",pricing:"Maliyet & kâr",quality:"Baskı kontrolü",activity:"İşlem geçmişi"};
 const evidence = {measured:"Ölçülen veri",estimate:"Tahmin / iddia",missing:"Eksik veri"};
 function message(value) { $("#message").textContent = value; }
 async function api(path, method="GET", data) {
@@ -28,7 +28,7 @@ function render() {
   for(const kind of ["pricing","quality"]) $("#"+kind+"-history").innerHTML=state.evaluations.filter(e=>e.kind===kind).map(e=>`<article class="entry"><h3>${escapeHTML(productName(e.product_id))}${kind==="pricing"?" · "+escapeHTML(e.inputs.variation || "Varyasyon belirtilmedi"):""}</h3><time>${date(e.created_at)}</time><span class="badge warn">${kind==="pricing"?"Doğrulanmamış senaryo":e.result.input_evidence==="file_header"?"Dosya başlığından ölçü":"Elle girilen ölçüler"}</span><details><summary>Girdiler ve hesap sonucu</summary><pre>${escapeHTML(JSON.stringify({inputs:e.inputs,result:e.result},null,2))}</pre></details></article>`).join("");
   $("#audit-list").innerHTML=state.audits.map(a=>`<article class="entry"><strong>${escapeHTML(a.event)}</strong><time>${date(a.created_at)}</time><details><summary>Önce / sonra</summary><pre>${escapeHTML(JSON.stringify({before:a.before_json?JSON.parse(a.before_json):null,after:JSON.parse(a.after_json)},null,2))}</pre></details></article>`).join("") || empty("Henüz işlem yok.");
 }
-async function refresh() {state=await api("/api/state");render();renderPilot();renderOutputs();renderAssets();}
+async function refresh() {state=await api("/api/state");render();renderPilot();renderOutputs();renderAssets();renderPerformance();}
 $("#refresh").onclick=()=>refresh().then(()=>message("Yerel kayıtlar yenilendi. Harici veri çekilmedi.")).catch(e=>message(e.message));
 function editor(product) {
  const form=$("#product-form");form.reset(); for(const key of ["id","version","title","sku","kind","notes"]) form.elements[key].value=product?.[key] ?? (key==="kind"?"seamless":"");
@@ -110,5 +110,15 @@ $("#asset-list").onclick=e=>{const button=e.target.closest("[data-repeat]");if(!
   const image=new Image();image.onload=()=>{const canvas=$("#repeat-canvas"),scale=300/Math.max(image.naturalWidth,image.naturalHeight),w=Math.max(1,Math.round(image.naturalWidth*scale)),h=Math.max(1,Math.round(image.naturalHeight*scale));canvas.width=w*3;canvas.height=h*3;const ctx=canvas.getContext("2d");ctx.clearRect(0,0,canvas.width,canvas.height);for(let y=0;y<3;y++)for(let x=0;x<3;x++)ctx.drawImage(image,x*w,y*h,w,h);$("#repeat-review").hidden=false;$("#repeat-review").scrollIntoView({behavior:"smooth"});};
   image.onerror=()=>message("Tarayıcı görselin piksel verisini açamadı. Başlık ölçüsü tek başına dosyanın sağlam olduğunu garanti etmez.");image.src="/assets/"+asset.id;
 };
+const performanceFields={visits:"Ziyaret",views:"Görüntülenme",favorites:"Favori",orders:"Sipariş",revenue:"Toplam gelir",ad_spend:"Reklam gideri",ad_revenue:"Reklama atfedilen gelir",etsy_search_visits:"Etsy aramasından ziyaret",social_visits:"Sosyal medyadan ziyaret"};
+$("#performance-fields").innerHTML=Object.entries(performanceFields).map(([key,label])=>`<label>${label}<input name="${key}" type="number" min="0" max="1000000000000" step="${["revenue","ad_spend","ad_revenue"].includes(key)?"0.01":"1"}" placeholder="Bilinmiyorsa boş bırakın"></label>`).join("");
+function renderPerformance() {
+  $("#performance-list").innerHTML=state.performance_reports.map(item=>{
+    const r=item.report,a=item.analysis;
+    const fmt=(value,suffix="")=>value===null?"Eksik veri":escapeHTML(value)+suffix;
+    return `<article class="entry"><span class="badge warn">Elle girilen rapor · Dışarıdan doğrulanmadı${a.stale?" · Eski veri":""}</span><h3>${escapeHTML(productName(item.product_id))}</h3><p>Listing ID: ${escapeHTML(item.listing_id)} · ${escapeHTML(item.period_start)} — ${escapeHTML(item.period_end)}</p><p>Kaynak: ${escapeHTML(r.source)}</p><div class="result-grid">${[[fmt(r.visits),"Ziyaret"],[fmt(r.orders),"Sipariş"],[fmt(a.conversion_pct,"%"),"Sipariş / ziyaret"],[fmt(r.ad_spend," "+r.currency),"Reklam gideri"],[fmt(a.ad_roas),"Reklam ROAS"],["Hesaplanmadı","Gerçek kâr"]].map(([v,label])=>`<div><strong>${v}</strong><span>${label}</span></div>`).join("")}</div><details><summary>Tüm metrikler ve eksikler</summary><p>${Object.entries(performanceFields).map(([key,label])=>`${label}: ${fmt(r[key])}`).join(" · ")}</p><p>${escapeHTML(r.notes)}</p></details><p class="muted">${escapeHTML(a.note)}</p>${a.recommendations.map(rec=>`<div class="entry"><span class="badge warn">${rec.priority==="data"?"Veri kontrolü":rec.priority==="high"?"Öncelikli inceleme":"İnceleme önerisi"} · Uygulanmadı</span><p><strong>${escapeHTML(rec.reason)}</strong></p><p>${escapeHTML(rec.action)}</p><small class="muted">Kural tabanlı öneri; ölçülmüş neden veya kesin sonuç değildir.</small></div>`).join("")}</article>`;
+  }).join("")||empty("Henüz gerçek mağaza raporu girilmedi. Örnek satış veya trafik verisi eklenmedi.");
+}
+$("#performance-form").onsubmit=e=>{e.preventDefault();submit(e.target,async()=>{await api("/api/performance","POST",Object.fromEntries(new FormData(e.target)));e.target.reset();await refresh();message("Rapor ve gerekçeli öneriler kaydedildi. Etsy fiyatı, reklamı veya listelemesi değiştirilmedi.");});};
 outputRole();
 refresh().catch(e=>message("Veriler yüklenemedi: "+e.message));

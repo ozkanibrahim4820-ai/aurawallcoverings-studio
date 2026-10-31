@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 
 from domain import ValidationError, pricing, quality, text
 from images import image_metadata
+from analytics import validate_report, analyze_report
 
 ROOT = Path(__file__).resolve().parent
 
@@ -58,6 +59,11 @@ class Store:
               created_at TEXT NOT NULL, UNIQUE(product_id,kind,sha256));
             CREATE UNIQUE INDEX IF NOT EXISTS assets_unique_source
               ON assets(sha256) WHERE kind IN ('seamless_source','mural_source');
+            CREATE TABLE IF NOT EXISTS performance_reports (
+              id TEXT PRIMARY KEY, product_id TEXT NOT NULL REFERENCES products(id),
+              listing_id TEXT NOT NULL, period_start TEXT NOT NULL, period_end TEXT NOT NULL,
+              report_json TEXT NOT NULL, created_at TEXT NOT NULL,
+              UNIQUE(listing_id,period_start,period_end));
             """)
 
     def connect(self):
@@ -82,10 +88,14 @@ class Store:
             result["pilot_checks"] = [dict(row) for row in db.execute("SELECT * FROM pilot_checks ORDER BY updated_at DESC")]
             result["outputs"] = [dict(row) for row in db.execute("SELECT * FROM outputs ORDER BY created_at DESC LIMIT 500")]
             result["assets"] = [dict(row) for row in db.execute("SELECT * FROM assets ORDER BY created_at DESC LIMIT 500")]
+            result["performance_reports"] = [dict(row) for row in db.execute("SELECT * FROM performance_reports ORDER BY period_end DESC,created_at DESC LIMIT 500")]
         for item in result["outputs"]:
             item["payload"] = json.loads(item.pop("payload_json"))
         for item in result["assets"]:
             item["metadata"] = json.loads(item.pop("metadata_json"))
+        for item in result["performance_reports"]:
+            item["report"] = json.loads(item.pop("report_json"))
+            item["analysis"] = analyze_report(item["report"])
         result["generated_at"] = now()
         result["shop"] = "AuraWallCoverings"
         result["limits"] = {"rows_per_section": 500}
@@ -182,6 +192,19 @@ class Store:
             if not row:
                 raise KeyError("Dosya bulunamadı.")
             return dict(row)
+
+    def add_performance_report(self, data):
+        report = validate_report(data)
+        with self.connect() as db:
+            if not db.execute("SELECT 1 FROM products WHERE id=?", (report["product_id"],)).fetchone():
+                raise KeyError("Ürün bulunamadı.")
+            mismatch = db.execute("SELECT 1 FROM performance_reports WHERE listing_id=? AND product_id<>?", (report["listing_id"], report["product_id"])).fetchone()
+            if mismatch:
+                raise ValidationError("Bu listing ID başka ürüne bağlanmış; eşleştirmeyi kontrol edin.")
+            identity = str(uuid.uuid4())
+            db.execute("INSERT INTO performance_reports VALUES(?,?,?,?,?,?,?)", (identity,report["product_id"],report["listing_id"],report["period_start"],report["period_end"],json.dumps(report),now()))
+            self.audit(db,"performance.report_recorded",report["product_id"],None,{"report_id":identity,"source":report["source"],"listing_id":report["listing_id"],"external_verified":False})
+            return {"id":identity,"analysis":analyze_report(report)}
 
     def asset_path(self, sha256):
         if not re.fullmatch(r"[a-f0-9]{64}", sha256):
@@ -376,6 +399,8 @@ def handler_factory(store):
                     result = store.add_output(data)
                 elif self.command == "POST" and path == "/api/assets":
                     result = store.add_asset(data)
+                elif self.command == "POST" and path == "/api/performance":
+                    result = store.add_performance_report(data)
                 elif self.command == "POST" and path in ("/api/pricing", "/api/quality"):
                     result = store.evaluate(data, path.split("/")[-1])
                 else:

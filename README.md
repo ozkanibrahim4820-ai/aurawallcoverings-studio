@@ -76,6 +76,16 @@ Boş veritabanıyla başlar; örnek ürünler gerçek veri olarak eklenmez.
   veya otomatik üretilen mockuplar değildir. SEO'da 140 karakter başlık, 13 benzersiz
   etiket ve etiket başına 20 karakter sınırı uygulanır. Metinlerin güncel politika,
   malzeme ve mağaza sabit açıklaması açısından insan incelemesi ayrıca gerekir.
+- `Satış & karar paneli`: listing ID ve ürün eşleştirmesiyle tarih aralığı,
+  rapor kaynağı, ziyaret/görüntülenme/favori/sipariş, gelir, reklam gideri ve
+  reklama atfedilen gelir kaydı. Arama/sosyal ziyaretleri ayrıca girilebilir.
+  Boş alanlar bilinmeyen, 0 gerçek sıfır olarak kalır. Dönüşüm sipariş/ziyaret;
+  ROAS yalnızca reklama atfedilen gelir/gider ile hesaplanır. Toplam gelirden
+  ROAS veya gerçekleşen kâr türetilmez. Kaynak elle girildiği için dışarıdan
+  doğrulanmış sayılmaz. Aynı listing ve dönem tekrar kaydedilemez; örtüşen
+  dönemler toplanmaz. Öneriler kural tabanlıdır ve Etsy'de uygulanmaz.
+  30 günden eski dönemler ve sınırlı örneklem işaretlenir; 100 ziyaret eşiği
+  istatistiksel kesinlik iddiası değildir.
 
 ## Sınırlar
 

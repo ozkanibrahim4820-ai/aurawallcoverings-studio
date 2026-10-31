@@ -79,9 +79,19 @@ def main():
                 page.locator("#quality-result").wait_for(state="visible")
                 assert "600" in page.locator("#quality-result").inner_text()
                 assert "Baskıya hazır onayı verilmedi" in page.locator("#quality-result").inner_text()
+                page.locator("nav [data-view=performance]").click()
+                page.locator('#performance-form [name="product_id"]').select_option(index=1)
+                for key,value in {"listing_id":"123456789","source":"BROWSER TEST FIXTURE — not shop metrics","period_start":"2026-01-01","period_end":"2026-01-31","currency":"USD","visits":"150","orders":"0","ad_spend":"30"}.items():
+                    page.locator(f'#performance-form [name="{key}"]').fill(value)
+                page.locator('#performance-form button[type="submit"]').click()
+                page.locator("#performance-list .entry").first.wait_for()
+                performance=page.locator("#performance-list").inner_text()
+                assert "150 ziyaret, 0 sipariş" in performance
+                assert "Eksik veri" in performance
+                assert "Uygulanmadı" in performance
                 assert not errors, errors
                 browser.close()
-                print(json.dumps({"browser":"Chromium", "product_create":"passed", "file_upload":"passed", "repeat_canvas_pixels":"passed", "file_dimensions_to_quality":"passed", "page_errors":errors, "user_data":"untouched; temporary database"}, ensure_ascii=False))
+                print(json.dumps({"browser":"Chromium", "product_create":"passed", "file_upload":"passed", "repeat_canvas_pixels":"passed", "file_dimensions_to_quality":"passed", "performance_report_and_advice":"passed", "page_errors":errors, "user_data":"untouched; temporary database"}, ensure_ascii=False))
         finally:
             server.shutdown()
             server.server_close()

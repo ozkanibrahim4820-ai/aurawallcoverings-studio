@@ -1,5 +1,29 @@
 # İlk sürüm — 31 Ekim 2026
 
+## Satış ve karar paneli güncellemesi
+
+- `analytics.py` ve `/api/performance`: elle girilmiş kaynak, tarih aralığı,
+  listing ID ve ürün eşleştirmesiyle performans raporu kaydı. Ziyaret,
+  görüntülenme, favori, sipariş, toplam gelir, reklam gideri/atıflı gelir ve
+  arama/sosyal trafik alanları var. Eksik metrikler null kalır, sıfıra dönüşmez.
+- Tüm kayıtlar kullanıcı raporudur, Etsy bağlantısından doğrulanmış değildir.
+  Dönüşüm sipariş/ziyaret; reklam ROAS'ı yalnız atfedilen gelir/gider üzerinden.
+  Gerçekleşen kâr gider dökümü olmadığından hesaplanmaz. Sıfır payda ve
+  tutarsız ziyaret/sipariş durumları açıkça ele alınır.
+- Tarih/kaynak eskiliği, eksik veri, sınırlı örneklem, ziyaret olup sipariş
+  olmaması ve eksik reklam atfı için açıklanabilir öneriler. Her öneri
+  `applied=false` ve `rule_based_suggestion`; mağazada değişiklik yapılmaz.
+  100 ziyaret yalnız inceleme eşiğidir; istatistiksel anlamlılık testi değildir.
+- Aynı listing/dönem tekrarı ve listing ID'nin başka ürüne bağlanması engellenir.
+  Örtüşen dönemlerden toplam çıkarılmaz. Veriler ek tabloyla saklanır;
+  mevcut ürün, dosya ve diğer kayıtlar korunur.
+- **37 test geçti.** Chromium'da yeni rapor formu, öneri ve eksik alan
+  göstergeleri; önceki dosya/3×3/kalite akışıyla birlikte geçti. JavaScript
+  pageerror yok. Tüm örnekler geçici test veritabanında; gerçek mağaza verisi
+  çekilmedi ve çalışma veritabanına örnek istatistik eklenmedi.
+- Etsy/Drive/Printmarkt bağlantıları henüz doğrulanmış değil. Bu panel gerçek
+  mağaza performansını kendiliğinden ölçmez; kullanıcının kaynak raporunu bekler.
+
 ## Gerçek dosya ve tekrar önizlemesi güncellemesi
 
 - `images.py` eklendi: PNG parça sınırları/CRC ve JPEG SOF üzerinden gerçek
